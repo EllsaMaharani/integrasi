@@ -1,0 +1,139 @@
+FROM osrf/ros:noetic-desktop
+
+# First, update without the key to ensure apt works
+RUN apt-get update || true
+
+# Install key management tools and Python pip first
+RUN apt-get install -y \
+    curl \
+    gnupg2 \
+    lsb-release \
+    python3-pip \
+    git \
+    && apt-get clean
+
+# Clean up existing keys properly
+RUN rm -f /etc/apt/sources.list.d/ros*.list && \
+    apt-key del F42ED6FBAB17C654 || true
+
+# Add the updated key using the current method
+RUN curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.key | apt-key add -
+
+# Add ROS repository
+RUN echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list
+
+# Update and install ROS dependencies
+RUN apt-get update && apt-get install -y \
+    python3-rosdep \
+    ros-noetic-ros-base \
+    ros-noetic-std-msgs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip to the latest version
+RUN pip3 install --upgrade pip
+
+# # Instalasi package Python yang dibutuhkan dengan versi spesifik
+# RUN pip3 install --no-cache-dir \
+#     matplotlib \
+#     matplotlib-inline \
+#     opencv-python \
+#     pillow \
+#     protobuf \
+#     tensorboard \
+#     tensorboard-data-server \
+#     tensorboard-plugin-wit \
+#     tensorflow\
+#     tensorflow-addons \
+#     tensorflow-estimator \
+#     tensorflow-gpu \
+#     tensorflow-intel \
+#     tensorflow-io-gcs-filesystem \
+#     wheel
+
+# Now we can use pip3 to install Firebase and other packages
+RUN pip3 install --no-cache-dir firebase-admin
+RUN pip3 install --no-cache-dir pyserial
+RUN pip3 install --no-cache-dir numpy
+RUN pip3 install --no-cache-dir opencv-python
+
+# Install ROS Python packages
+RUN pip3 install --no-cache-dir rospkg catkin_pkg
+
+# Install YOLOv9 dependencies
+RUN pip3 install --no-cache-dir pandas matplotlib seaborn scipy tqdm pyyaml IPython
+
+# Install a smaller CPU-only PyTorch for build purposes
+RUN pip3 install --no-cache-dir torch==1.10.0+cpu torchvision==0.11.1+cpu -f https://download.pytorch.org/whl/torch_stable.html || \
+    echo "PyTorch installation failed, but continuing build..."
+
+# Clone YOLOv9 repository
+WORKDIR /home
+# RUN git clone https://github.com/WongKinYiu/yolov9.git
+
+# Tambahan dependencies untuk bismillah_pengujian.py
+RUN pip3 install --no-cache-dir \
+    matplotlib==3.5.2 \
+    matplotlib-inline==0.1.3 \
+    opencv-python==4.6.0.66 \
+    pillow==9.2.0 \
+    protobuf==3.19.4 \
+    tensorboard==2.9.1 \
+    # Choose only ONE TensorFlow variant based on your target environment:
+    tensorflow==2.9.1 \
+    # If you need additional TensorFlow addons:
+    tensorflow-addons==0.17.1 \
+    wheel==0.37.1
+
+# Install system libraries yang dibutuhkan OpenCV
+RUN apt-get update && apt-get install -y \
+    python3-dev \
+    libgl1-mesa-glx \
+    libglib2.0-0
+
+# Install protobuf compiler
+RUN apt-get update && apt-get install -y protobuf-compiler && rm -rf /var/lib/apt/lists/*
+
+# Uninstall existing PyYAML first
+RUN pip3 uninstall -y PyYAML || true
+
+# Install specific version of PyYAML
+RUN pip3 install --no-cache-dir --ignore-installed PyYAML==6.0.1
+
+# Setup TensorFlow Object Detection API with force reinstall
+RUN git clone --depth 1 https://github.com/tensorflow/models.git /tensorflow/models
+WORKDIR /tensorflow/models/research/
+
+# Compile protos
+RUN protoc object_detection/protos/*.proto --python_out=.
+
+# Install Object Detection API with ignore-installed flag
+RUN cp object_detection/packages/tf2/setup.py .
+RUN python3 -m pip install --no-cache-dir --ignore-installed .
+
+# Set PYTHONPATH untuk Object Detection API
+ENV PYTHONPATH=/tensorflow/models/research:/tensorflow/models/research/slim
+ENV PYTHONPATH=${PYTHONPATH}:/tensorflow/models/research:/tensorflow/models/research/slim
+# Create and set working directory
+WORKDIR /home/ros_ws
+
+# Copy Firebase credentials
+COPY mlff-firebase-key.json /home/ros_ws/
+
+# Copy files
+COPY bismillah_pengujian.py /home/ros_ws/
+COPY subscriber.py /home/ros_ws/
+COPY sensor.py /home/ros_ws/
+# COPY best3_sgd3.pt /home/ros_ws/
+COPY launch.sh /home/ros_ws/
+COPY entrypoint.sh /entrypoint.sh
+COPY waskita_ent1.mp4 /home/ros_ws/waskita_ent1.mp4
+# COPY expanded_vehicle_dataset.csv /home/ros_ws/expanded_vehicle_dataset.csv
+COPY inference_graph/saved_model /home/ros_ws/inference_graph/saved_model
+COPY objects_label_map.pbtxt /home/ros_ws/objects_label_map.pbtxt
+
+# Make scripts executable
+RUN chmod +x /entrypoint.sh
+RUN chmod +x /home/ros_ws/launch.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]
